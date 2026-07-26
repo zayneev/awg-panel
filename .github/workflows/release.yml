@@ -1,0 +1,43 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        run: |
+          make test
+          make installer-test
+      - name: Build release assets
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          make release VERSION="${VERSION#v}"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static
+          cd dist
+          sha256sum -c SHA256SUMS
+          test "$(./awgpanel-linux-amd64 --version)" = "awgpanel version ${VERSION#v}"
+          test "$(qemu-aarch64-static ./awgpanel-linux-arm64 --version)" = "awgpanel version ${VERSION#v}"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" install.sh dist/awgpanel-linux-amd64 dist/awgpanel-linux-arm64 dist/SHA256SUMS --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" install.sh dist/awgpanel-linux-amd64 dist/awgpanel-linux-arm64 dist/SHA256SUMS --verify-tag --generate-notes
+          fi
