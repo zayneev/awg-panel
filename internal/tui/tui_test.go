@@ -140,9 +140,14 @@ func TestNarrowListViewKeepsEssentialColumns(t *testing.T) {
 
 type fakeRouting struct {
 	*fakeManager
-	status model.RoutingStatus
-	rules  []model.RoutingRule
-	added  model.RoutingRule
+	status              model.RoutingStatus
+	rules               []model.RoutingRule
+	added               model.RoutingRule
+	warpRegistered      bool
+	warpTermsAccepted   bool
+	warpHealthChecked   bool
+	warpRegistrationErr error
+	warpHealthErr       error
 }
 
 func (f *fakeRouting) RoutingStatus(context.Context) model.RoutingStatus { return f.status }
@@ -157,8 +162,18 @@ func (f *fakeRouting) RoutingRuleAdd(rule model.RoutingRule) error { f.added = r
 func (f *fakeRouting) RoutingRuleSet(rule model.RoutingRule) error { f.added = rule; return nil }
 func (f *fakeRouting) RoutingRuleToggle(string, bool) error        { return nil }
 func (f *fakeRouting) RoutingRuleDelete(string) error              { return nil }
+func (f *fakeRouting) RoutingWarpRegister(_ context.Context, accept bool) error {
+	f.warpTermsAccepted = accept
+	if f.warpRegistrationErr != nil {
+		return f.warpRegistrationErr
+	}
+	f.warpRegistered = true
+	f.status.Warp = model.WarpStatus{Configured: true, Source: "registered"}
+	return nil
+}
 func (f *fakeRouting) RoutingWarpTest(context.Context) (model.WarpStatus, error) {
-	return model.WarpStatus{Healthy: true}, nil
+	f.warpHealthChecked = true
+	return model.WarpStatus{Configured: true, Healthy: f.warpHealthErr == nil, Source: "registered"}, f.warpHealthErr
 }
 
 func TestRoutingScreenAndDegradedWarning(t *testing.T) {
@@ -197,5 +212,47 @@ func TestRoutingRuleEditor(t *testing.T) {
 	_, _ = m.Update(cmd())
 	if fake.added.ID != "video" || fake.added.Outbound != "warp" || len(fake.added.Domains) != 1 {
 		t.Fatalf("unexpected rule: %+v", fake.added)
+	}
+}
+
+func TestWarpRegistrationFromTUI(t *testing.T) {
+	fake := &fakeRouting{fakeManager: &fakeManager{}, status: model.RoutingStatus{Installed: true, State: "disabled"}}
+	m := &modelUI{manager: fake, routing: fake, screen: screenRouting, routingTab: 2, width: 100, height: 30}
+	updateKey(t, m, "g")
+	if m.screen != screenRoutingWarpRegisterConfirm {
+		t.Fatalf("registration confirmation did not open: screen=%d", m.screen)
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "условий Cloudflare WARP") || !strings.Contains(view, "health-check") {
+		t.Fatalf("confirmation does not explain registration: %s", view)
+	}
+	cmd := updateKey(t, m, "enter")
+	if cmd == nil || !m.busy {
+		t.Fatal("registration command was not started")
+	}
+	_, _ = m.Update(cmd())
+	if !fake.warpRegistered || !fake.warpTermsAccepted || !fake.warpHealthChecked {
+		t.Fatalf("unexpected registration flow: registered=%v accepted=%v checked=%v", fake.warpRegistered, fake.warpTermsAccepted, fake.warpHealthChecked)
+	}
+	if m.screen != screenRouting || m.err != nil || !strings.Contains(m.notice, "health-check пройден") {
+		t.Fatalf("unexpected result: screen=%d err=%v notice=%q", m.screen, m.err, m.notice)
+	}
+	if !m.routingStatus.Warp.Configured || !m.routingStatus.Warp.Healthy {
+		t.Fatalf("WARP status was not updated: %+v", m.routingStatus.Warp)
+	}
+}
+
+func TestWarpRegistrationRequiresInstalledDisabledRouting(t *testing.T) {
+	for name, status := range map[string]model.RoutingStatus{
+		"not installed": {State: "disabled"},
+		"enabled":       {Installed: true, Enabled: true, State: "active"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeRouting{fakeManager: &fakeManager{}, status: status}
+			m := &modelUI{manager: fake, routing: fake, screen: screenRouting, routingTab: 2}
+			if cmd := updateKey(t, m, "g"); cmd != nil || m.screen != screenRouting {
+				t.Fatalf("registration unexpectedly opened: screen=%d", m.screen)
+			}
+		})
 	}
 }
