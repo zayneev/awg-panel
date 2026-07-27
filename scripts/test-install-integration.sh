@@ -29,7 +29,19 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "status" ]]; then
-  echo '{"healthy":false,"serviceActive":false,"compatibility":{"ok":true}}'
+  cat <<'JSON'
+{
+  "healthy": false,
+  "serviceActive": false,
+  "compatibility": {
+    "ok": true,
+    "supportedMinors": [
+      "5.20",
+      "5.21"
+    ]
+  }
+}
+JSON
   exit 1
 fi
 exit 0

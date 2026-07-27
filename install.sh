@@ -667,11 +667,12 @@ install_files() {
 }
 
 classify_status_json() {
-  local json="$1"
-  if [[ "$json" != *'"compatibility":{"ok":true'* ]]; then
+  local json="$1" compact
+  compact="$(printf '%s' "$json" | tr -d '[:space:]')"
+  if [[ "$compact" != *'"compatibility":{"ok":true'* ]]; then
     return 2
   fi
-  [[ "$json" == *'"serviceActive":true'* ]] && return 0
+  [[ "$compact" == *'"serviceActive":true'* ]] && return 0
   return 1
 }
 

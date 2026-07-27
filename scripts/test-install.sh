@@ -50,6 +50,14 @@ assert_success 'поддерживается AWG 5.21' is_supported_awg_minor 5.
 assert_failure 'AWG 5.22 пока не поддерживается' is_supported_awg_minor 5.22
 
 assert_success 'здоровый status JSON' classify_status_json '{"serviceActive":true,"compatibility":{"ok":true}}'
+assert_success 'здоровый форматированный status JSON' classify_status_json '{
+  "healthy": true,
+  "serviceActive": true,
+  "compatibility": {
+    "ok": true,
+    "supportedMinors": ["5.20", "5.21"]
+  }
+}'
 set +e
 classify_status_json '{"serviceActive":false,"compatibility":{"ok":true}}'
 rc=$?
