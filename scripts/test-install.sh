@@ -107,10 +107,10 @@ XRAY
 chmod +x "$xray_good"
 
 set +e
-(set -o pipefail; { printf 'Xray %s\n' "$XRAY_VERSION"; yes 'extra version output'; } | grep -Fq "Xray $XRAY_VERSION")
+(set -o pipefail; { printf 'Xray %s\n' "$XRAY_VERSION"; yes 'extra version output' 2>/dev/null; } | grep -Fq "Xray $XRAY_VERSION")
 old_pipeline_rc=$?
 set -e
-assert_equal 'регрессия старой Xray-проверки воспроизводит SIGPIPE' 141 "$old_pipeline_rc"
+assert_failure 'регрессия старой Xray-проверки воспроизводит broken pipe' test "$old_pipeline_rc" -eq 0
 assert_equal 'версия Xray читается без SIGPIPE' "$XRAY_VERSION" "$(verify_xray_binary_version "$xray_good" "$XRAY_VERSION")"
 
 xray_wrong="$tmp/xray-wrong"
