@@ -25,6 +25,8 @@ import (
 
 const maxArtifactSize = 16 << 20
 
+var supportedManageMinors = []string{"5.20", "5.21"}
+
 type Service struct {
 	cfg      config.Config
 	mutateMu sync.Mutex
@@ -70,7 +72,7 @@ type upstreamStatsClient struct {
 }
 
 func (s *Service) Compatibility() model.Compatibility {
-	result := model.Compatibility{RequiredMinor: s.cfg.RequiredManageMinor}
+	result := model.Compatibility{SupportedMinors: append([]string(nil), supportedManageMinors...)}
 	manage, err := scriptVersion(s.cfg.ManageScript, "SCRIPT_VERSION")
 	if err != nil {
 		result.Message = err.Error()
@@ -84,16 +86,34 @@ func (s *Service) Compatibility() model.Compatibility {
 	}
 	result.ManageVersion = manage
 	result.CommonVersion = common
-	if minor(manage) != s.cfg.RequiredManageMinor || minor(common) != s.cfg.RequiredManageMinor {
-		result.Message = fmt.Sprintf("поддерживается версия %s.x; найдены manage=%s, common=%s", s.cfg.RequiredManageMinor, manage, common)
+	manageMinor, commonMinor := minor(manage), minor(common)
+	if manageMinor != commonMinor {
+		result.Message = "версии manage и awg_common несовместимы"
 		return result
 	}
-	if minor(manage) != minor(common) {
-		result.Message = "версии manage и awg_common несовместимы"
+	if !isSupportedManageMinor(manageMinor) {
+		result.Message = fmt.Sprintf("поддерживаются версии %s; найдены manage=%s, common=%s", supportedManageVersions(), manage, common)
 		return result
 	}
 	result.OK = true
 	return result
+}
+
+func isSupportedManageMinor(value string) bool {
+	for _, supported := range supportedManageMinors {
+		if value == supported {
+			return true
+		}
+	}
+	return false
+}
+
+func supportedManageVersions() string {
+	versions := make([]string, 0, len(supportedManageMinors))
+	for _, supported := range supportedManageMinors {
+		versions = append(versions, supported+".x")
+	}
+	return strings.Join(versions, ", ")
 }
 
 var versionPatterns = map[string]*regexp.Regexp{

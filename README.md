@@ -1,6 +1,6 @@
 # awgpanel
 
-Терминальный интерфейс для серверов, установленных через [`bivlked/amneziawg-installer`](https://github.com/bivlked/amneziawg-installer) 5.20.x.
+Терминальный интерфейс для серверов, установленных через [`bivlked/amneziawg-installer`](https://github.com/bivlked/amneziawg-installer) 5.20.x или 5.21.x.
 
 `awgpanel` не заменяет `manage_amneziawg.sh`: клиенты, ключи и конфигурация остаются в AmneziaWG. Программа запускается через SSH и `sudo`, напрямую вызывает разрешённые операции upstream-скрипта и не создаёт web-сервер. Опциональная WARP-маршрутизация устанавливается только с флагом `--with-routing` и включается отдельной явной командой.
 
@@ -33,7 +33,7 @@ make release VERSION=0.3.0
 
 ## Установка на VPS
 
-На VPS с уже установленной AmneziaWG 5.20.x запустите интерактивный мастер:
+На VPS с уже установленной AmneziaWG 5.20.x или 5.21.x запустите интерактивный мастер:
 
 ```bash
 curl -fsSL https://github.com/zayneev/awg-panel/releases/latest/download/install.sh | sudo bash

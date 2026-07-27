@@ -49,10 +49,16 @@ config="$test_root/etc/awgpanel/config.json"
 test -x "$installed" || { printf '%s\n' 'бинарник не установлен' >&2; exit 1; }
 [[ "$($installed --version)" == 'awgpanel version 0.3.0' ]] || { printf '%s\n' 'неверная установленная версия' >&2; exit 1; }
 test -f "$config" || { printf '%s\n' 'config.json не создан' >&2; exit 1; }
+! grep -q 'requiredManageMinor' "$config" || { printf '%s\n' 'новый config.json содержит устаревшую политику версии' >&2; exit 1; }
 printf '%s\n' '{"custom":"preserve-me"}' >"$config"
 
 run_installer --binary="$good_panel" --non-interactive >/dev/null
 [[ "$(<"$config")" == '{"custom":"preserve-me"}' ]] || { printf '%s\n' 'config.json был перезаписан' >&2; exit 1; }
+
+printf '%s\n' 'SCRIPT_VERSION="5.21.2"' >"$test_root/root/awg/manage_amneziawg.sh"
+printf '%s\n' 'AWG_COMMON_VERSION="5.21.2"' >"$test_root/root/awg/awg_common.sh"
+run_installer --binary="$good_panel" --non-interactive >/dev/null
+[[ "$(<"$config")" == '{"custom":"preserve-me"}' ]] || { printf '%s\n' 'config.json был перезаписан при обновлении на AWG 5.21' >&2; exit 1; }
 
 bad_panel="$fixtures/awgpanel-bad"
 cat >"$bad_panel" <<'PANEL'

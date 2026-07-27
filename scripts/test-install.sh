@@ -43,6 +43,11 @@ assert_failure 'неподдерживаемая архитектура' machine
 assert_equal 'имя amd64 asset' awgpanel-linux-amd64 "$(panel_asset x86_64)"
 assert_equal 'URL latest' "https://github.com/zayneev/awg-panel/releases/latest/download" "$(release_base_url '')"
 assert_equal 'URL версии' "https://github.com/zayneev/awg-panel/releases/download/v0.3.0" "$(release_base_url 0.3.0)"
+assert_equal 'minor из patch-версии' 5.21 "$(version_minor 5.21.2)"
+assert_failure 'неполная версия не имеет minor' version_minor 5.21
+assert_success 'поддерживается AWG 5.20' is_supported_awg_minor 5.20
+assert_success 'поддерживается AWG 5.21' is_supported_awg_minor 5.21
+assert_failure 'AWG 5.22 пока не поддерживается' is_supported_awg_minor 5.22
 
 assert_success 'здоровый status JSON' classify_status_json '{"serviceActive":true,"compatibility":{"ok":true}}'
 set +e
@@ -75,6 +80,19 @@ assert_failure 'xray archive требует routing' bash -c "AWGPANEL_INSTALL_L
 
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
+
+check_versions() {
+  local manage="$1" common="$2"
+  printf 'SCRIPT_VERSION="%s"\n' "$manage" >"$tmp/manage.sh"
+  printf 'AWG_COMMON_VERSION="%s"\n' "$common" >"$tmp/common.sh"
+  (MANAGE_SCRIPT="$tmp/manage.sh" COMMON_SCRIPT="$tmp/common.sh" check_awg_compatibility >/dev/null)
+}
+
+assert_success 'совместимы разные patch 5.20' check_versions 5.20.1 5.20.9
+assert_success 'совместимы разные patch 5.21' check_versions 5.21.2 5.21.0
+assert_failure 'смешанные minor несовместимы' check_versions 5.20.1 5.21.2
+assert_failure 'будущий minor отклоняется' check_versions 5.22.0 5.22.1
+
 printf 'old\n' >"$tmp/target"
 BACKUP_DIR="$tmp/backup"
 mkdir "$BACKUP_DIR"

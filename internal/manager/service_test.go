@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,13 +102,90 @@ func TestArtifactRejectsSymlink(t *testing.T) {
 	}
 }
 
-func TestCompatibilityFailsClosed(t *testing.T) {
-	svc, cfg, _ := testService(t)
-	mustWrite(t, cfg.CommonScript, "AWG_COMMON_VERSION=\"5.21.0\"\n")
-	compat := svc.Compatibility()
-	if compat.OK || !strings.Contains(compat.Message, "5.20") {
-		t.Fatalf("unexpected compatibility: %+v", compat)
+func TestCompatibilityMatrix(t *testing.T) {
+	tests := []struct {
+		name, manage, common string
+		wantOK               bool
+		message              string
+	}{
+		{name: "5.20", manage: "5.20.1", common: "5.20.9", wantOK: true},
+		{name: "5.21", manage: "5.21.2", common: "5.21.0", wantOK: true},
+		{name: "future minor", manage: "5.22.0", common: "5.22.1", message: "5.20.x, 5.21.x"},
+		{name: "mixed minors", manage: "5.20.1", common: "5.21.2", message: "несовместимы"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, cfg, _ := testService(t)
+			mustWrite(t, cfg.ManageScript, fmt.Sprintf("SCRIPT_VERSION=\"%s\"\n", tt.manage))
+			mustWrite(t, cfg.CommonScript, fmt.Sprintf("AWG_COMMON_VERSION=\"%s\"\n", tt.common))
+			compat := svc.Compatibility()
+			if compat.OK != tt.wantOK || (tt.message != "" && !strings.Contains(compat.Message, tt.message)) {
+				t.Fatalf("unexpected compatibility: %+v", compat)
+			}
+			if strings.Join(compat.SupportedMinors, ",") != "5.20,5.21" {
+				t.Fatalf("unexpected supported minors: %v", compat.SupportedMinors)
+			}
+		})
+	}
+}
+
+func TestLegacyRequiredMinorDoesNotOverrideReleaseCompatibility(t *testing.T) {
+	svc, _, _ := testService(t)
+	svc.cfg.RequiredManageMinor = "9.99"
+	if compat := svc.Compatibility(); !compat.OK {
+		t.Fatalf("legacy config field changed compatibility: %+v", compat)
+	}
+}
+
+func TestManageContract521(t *testing.T) {
+	svc, cfg, logPath := testService(t)
+	mustWrite(t, cfg.ManageScript, strings.ReplaceAll(mustRead(t, cfg.ManageScript), "5.20.1", "5.21.2"))
+	mustWrite(t, cfg.CommonScript, "AWG_COMMON_VERSION=\"5.21.2\"\n")
+
+	listOut, err := svc.runManage(context.Background(), "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []upstreamListClient
+	if err := json.Unmarshal(listOut, &listed); err != nil || len(listed) != 1 || listed[0].ClientIPv6 != "fd00::2" {
+		t.Fatalf("unexpected list contract: %s (%v)", listOut, err)
+	}
+	statsOut, err := svc.runManage(context.Background(), "stats", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stats []upstreamStatsClient
+	if err := json.Unmarshal(statsOut, &stats); err != nil || len(stats) != 1 || stats[0].LastHandshake != 1710312180 {
+		t.Fatalf("unexpected stats contract: %s (%v)", statsOut, err)
+	}
+
+	commands := [][]string{
+		{"add", "tablet", "--expires=7d", "--psk"},
+		{"modify", "phone", "DNS", "1.1.1.1"},
+		{"remove", "phone", "--yes"},
+		{"backup"},
+		{"restart", "--yes"},
+	}
+	for _, args := range commands {
+		if _, err := svc.runManage(context.Background(), args...); err != nil {
+			t.Fatalf("%s contract failed: %v", args[0], err)
+		}
+	}
+	log := mustRead(t, logPath)
+	for _, command := range []string{"add tablet", "modify phone", "remove phone", "backup", "restart"} {
+		if !strings.Contains(log, command) {
+			t.Fatalf("command log does not contain %q: %s", command, log)
+		}
+	}
+}
+
+func mustRead(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 func TestUptimeFromMonotonic(t *testing.T) {

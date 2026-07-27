@@ -3,11 +3,16 @@ package model
 import "time"
 
 type Compatibility struct {
-	OK            bool   `json:"ok"`
-	ManageVersion string `json:"manageVersion,omitempty"`
-	CommonVersion string `json:"commonVersion,omitempty"`
-	RequiredMinor string `json:"requiredMinor"`
-	Message       string `json:"message,omitempty"`
+	OK              bool     `json:"ok"`
+	ManageVersion   string   `json:"manageVersion,omitempty"`
+	CommonVersion   string   `json:"commonVersion,omitempty"`
+	SupportedMinors []string `json:"supportedMinors"`
+	Message         string   `json:"message,omitempty"`
+	// RequiredMinor is retained as an optional compatibility field for older API
+	// clients. New responses omit it in favor of SupportedMinors.
+	//
+	// Deprecated: use SupportedMinors.
+	RequiredMinor string `json:"requiredMinor,omitempty"`
 }
 
 type ServerStatus struct {

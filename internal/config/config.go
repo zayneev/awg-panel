@@ -11,48 +11,52 @@ import (
 const DefaultPath = "/etc/awgpanel/config.json"
 
 type Config struct {
-	ManageScript        string `json:"manageScript"`
-	CommonScript        string `json:"commonScript"`
-	AWGDir              string `json:"awgDir"`
-	ServerConfig        string `json:"serverConfig"`
-	RequiredManageMinor string `json:"requiredManageMinor"`
-	RoutingDir          string `json:"routingDir"`
-	RoutingConfig       string `json:"routingConfig"`
-	WarpSecrets         string `json:"warpSecrets"`
-	XrayBinary          string `json:"xrayBinary"`
-	XrayAssets          string `json:"xrayAssets"`
-	XrayConfig          string `json:"xrayConfig"`
-	GeoSiteData         string `json:"geoSiteData"`
-	RoutingInterface    string `json:"routingInterface"`
-	DNSListen           string `json:"dnsListen"`
-	DNSPort             int    `json:"dnsPort"`
-	TProxyPort          int    `json:"tproxyPort"`
-	HealthPort          int    `json:"healthPort"`
-	FWMark              uint32 `json:"fwMark"`
-	RouteTable          int    `json:"routeTable"`
+	ManageScript     string `json:"manageScript"`
+	CommonScript     string `json:"commonScript"`
+	AWGDir           string `json:"awgDir"`
+	ServerConfig     string `json:"serverConfig"`
+	RoutingDir       string `json:"routingDir"`
+	RoutingConfig    string `json:"routingConfig"`
+	WarpSecrets      string `json:"warpSecrets"`
+	XrayBinary       string `json:"xrayBinary"`
+	XrayAssets       string `json:"xrayAssets"`
+	XrayConfig       string `json:"xrayConfig"`
+	GeoSiteData      string `json:"geoSiteData"`
+	RoutingInterface string `json:"routingInterface"`
+	DNSListen        string `json:"dnsListen"`
+	DNSPort          int    `json:"dnsPort"`
+	TProxyPort       int    `json:"tproxyPort"`
+	HealthPort       int    `json:"healthPort"`
+	FWMark           uint32 `json:"fwMark"`
+	RouteTable       int    `json:"routeTable"`
+	// RequiredManageMinor is retained only so existing config files continue to
+	// load. Compatibility is a property of the awgpanel release and this value
+	// is intentionally ignored by the runtime.
+	//
+	// Deprecated: compatibility is defined by the awgpanel release.
+	RequiredManageMinor string `json:"requiredManageMinor,omitempty"`
 }
 
 func Default() Config {
 	return Config{
-		ManageScript:        "/root/awg/manage_amneziawg.sh",
-		CommonScript:        "/root/awg/awg_common.sh",
-		AWGDir:              "/root/awg",
-		ServerConfig:        "/etc/amnezia/amneziawg/awg0.conf",
-		RequiredManageMinor: "5.20",
-		RoutingDir:          "/etc/awgpanel/routing",
-		RoutingConfig:       "/etc/awgpanel/routing/routing.json",
-		WarpSecrets:         "/etc/awgpanel/routing/warp.json",
-		XrayBinary:          "/usr/local/lib/awgpanel/xray",
-		XrayAssets:          "/usr/local/share/awgpanel/xray",
-		XrayConfig:          "/etc/awgpanel/routing/xray.json",
-		GeoSiteData:         "/usr/local/share/awgpanel/xray/geosite.dat",
-		RoutingInterface:    "awg0",
-		DNSListen:           "0.0.0.0",
-		DNSPort:             1053,
-		TProxyPort:          17890,
-		HealthPort:          17891,
-		FWMark:              0xA61,
-		RouteTable:          1061,
+		ManageScript:     "/root/awg/manage_amneziawg.sh",
+		CommonScript:     "/root/awg/awg_common.sh",
+		AWGDir:           "/root/awg",
+		ServerConfig:     "/etc/amnezia/amneziawg/awg0.conf",
+		RoutingDir:       "/etc/awgpanel/routing",
+		RoutingConfig:    "/etc/awgpanel/routing/routing.json",
+		WarpSecrets:      "/etc/awgpanel/routing/warp.json",
+		XrayBinary:       "/usr/local/lib/awgpanel/xray",
+		XrayAssets:       "/usr/local/share/awgpanel/xray",
+		XrayConfig:       "/etc/awgpanel/routing/xray.json",
+		GeoSiteData:      "/usr/local/share/awgpanel/xray/geosite.dat",
+		RoutingInterface: "awg0",
+		DNSListen:        "0.0.0.0",
+		DNSPort:          1053,
+		TProxyPort:       17890,
+		HealthPort:       17891,
+		FWMark:           0xA61,
+		RouteTable:       1061,
 	}
 }
 
@@ -92,9 +96,6 @@ func (c Config) Validate() error {
 		if !filepath.IsAbs(path) {
 			return fmt.Errorf("%s must be an absolute path", name)
 		}
-	}
-	if c.RequiredManageMinor == "" {
-		return errors.New("requiredManageMinor is required")
 	}
 	if c.RoutingInterface == "" {
 		return errors.New("routingInterface is required")

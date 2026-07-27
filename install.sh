@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 REPOSITORY="${AWGPANEL_REPOSITORY:-zayneev/awg-panel}"
 XRAY_VERSION="26.7.11"
-REQUIRED_AWG_MINOR="5.20"
+SUPPORTED_AWG_MINORS=("5.20" "5.21")
 
 PANEL_BINARY="${PANEL_BINARY:-}"
 REQUESTED_VERSION=""
@@ -202,7 +202,7 @@ run_wizard() {
   open_tty || die "интерактивный режим требует TTY; используйте --non-interactive"
   if [[ "${TERM:-dumb}" != "dumb" ]]; then printf '\n\033[1;36mAWG Panel — мастер установки\033[0m\n' >&$TTY_FD; else printf '\nAWG Panel — мастер установки\n' >&$TTY_FD; fi
   printf '─────────────────────────────\n' >&$TTY_FD
-  printf 'Панель управляет существующей AmneziaWG 5.20.x и не переустанавливает VPN.\n\n' >&$TTY_FD
+  printf 'Панель управляет существующей AmneziaWG 5.20.x/5.21.x и не переустанавливает VPN.\n\n' >&$TTY_FD
 
   if [[ "$ROUTING_EXPLICIT" -eq 0 ]]; then
     if routing_installed; then
@@ -239,15 +239,42 @@ extract_script_version() {
   sed -nE "s/^[[:space:]]*${variable}=[\"']?([^\"'[:space:]]+).*/\\1/p" "$file" | head -n 1
 }
 
+version_minor() {
+  local version="$1"
+  if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\. ]]; then
+    printf '%s.%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  return 1
+}
+
+is_supported_awg_minor() {
+  local value="$1" supported
+  for supported in "${SUPPORTED_AWG_MINORS[@]}"; do
+    [[ "$value" == "$supported" ]] && return 0
+  done
+  return 1
+}
+
+supported_awg_versions() {
+  local supported result=""
+  for supported in "${SUPPORTED_AWG_MINORS[@]}"; do
+    [[ -z "$result" ]] || result+=", "
+    result+="${supported}.x"
+  done
+  printf '%s\n' "$result"
+}
+
 check_awg_compatibility() {
-  local manage_version common_version
+  local manage_version common_version manage_minor common_minor
   manage_version="$(extract_script_version "$MANAGE_SCRIPT" SCRIPT_VERSION)"
   common_version="$(extract_script_version "$COMMON_SCRIPT" AWG_COMMON_VERSION)"
   [[ -n "$manage_version" ]] || die "не удалось определить версию $MANAGE_SCRIPT"
   [[ -n "$common_version" ]] || die "не удалось определить версию $COMMON_SCRIPT"
-  [[ "$manage_version" == "$REQUIRED_AWG_MINOR".* ]] || die "требуется AmneziaWG $REQUIRED_AWG_MINOR.x, обнаружена $manage_version"
-  [[ "$common_version" == "$REQUIRED_AWG_MINOR".* ]] || die "требуется awg_common $REQUIRED_AWG_MINOR.x, обнаружена $common_version"
-  [[ "${manage_version%.*}" == "${common_version%.*}" ]] || die "версии manage ($manage_version) и awg_common ($common_version) несовместимы"
+  manage_minor="$(version_minor "$manage_version")" || die "неверный формат версии AmneziaWG: $manage_version"
+  common_minor="$(version_minor "$common_version")" || die "неверный формат версии awg_common: $common_version"
+  [[ "$manage_minor" == "$common_minor" ]] || die "версии manage ($manage_version) и awg_common ($common_version) несовместимы"
+  is_supported_awg_minor "$manage_minor" || die "поддерживаются AmneziaWG $(supported_awg_versions); обнаружена $manage_version"
   printf '  AmneziaWG: manage %s, common %s\n' "$manage_version" "$common_version"
 }
 
@@ -403,7 +430,6 @@ write_default_config() {
   "commonScript": "/root/awg/awg_common.sh",
   "awgDir": "/root/awg",
   "serverConfig": "/etc/amnezia/amneziawg/awg0.conf",
-  "requiredManageMinor": "5.20",
   "routingDir": "/etc/awgpanel/routing",
   "routingConfig": "/etc/awgpanel/routing/routing.json",
   "warpSecrets": "/etc/awgpanel/routing/warp.json",

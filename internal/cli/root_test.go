@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -22,7 +23,7 @@ type fakeManager struct {
 }
 
 func (f *fakeManager) Status(context.Context) model.ServerStatus {
-	return model.ServerStatus{Healthy: true, ServiceActive: true, Compatibility: model.Compatibility{OK: true, ManageVersion: "5.20.1", CommonVersion: "5.20.1"}}
+	return model.ServerStatus{Healthy: true, ServiceActive: true, Compatibility: model.Compatibility{OK: true, ManageVersion: "5.20.1", CommonVersion: "5.20.1", SupportedMinors: []string{"5.20", "5.21"}}}
 }
 func (f *fakeManager) Clients(context.Context) ([]model.Client, error) {
 	return append([]model.Client(nil), f.clients...), nil
@@ -75,6 +76,25 @@ func TestConfigWritesExactBytes(t *testing.T) {
 	}
 	if !bytes.Equal(out.Bytes(), data) {
 		t.Fatalf("config changed: %q", out.Bytes())
+	}
+}
+
+func TestStatusJSONReportsSupportedMinors(t *testing.T) {
+	m := &fakeManager{}
+	out, _, root := testRoot(m, "", nil)
+	root.SetArgs([]string{"status", "--json"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var status model.ServerStatus
+	if err := json.Unmarshal(out.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(status.Compatibility.SupportedMinors, ",") != "5.20,5.21" {
+		t.Fatalf("supported minors missing from status JSON: %s", out.String())
+	}
+	if strings.Contains(out.String(), `"requiredMinor"`) {
+		t.Fatalf("deprecated requiredMinor unexpectedly emitted: %s", out.String())
 	}
 }
 
