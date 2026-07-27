@@ -190,11 +190,34 @@ func registerWarp(ctx context.Context, acceptTerms bool, apiURL string, client *
 		DeviceID: envelope.ID, AccessToken: envelope.Token, License: envelope.Account.License,
 		HealthUser: user, HealthPass: pass,
 	}
-	result.Addresses = compactStrings(result.Addresses)
+	result.Addresses, err = normalizeWarpAddresses(result.Addresses)
+	if err != nil {
+		return WarpSecrets{}, err
+	}
 	if err := validateWireGuardKeys(result); err != nil {
 		return WarpSecrets{}, err
 	}
 	return result, ValidateWarp(result)
+}
+
+func normalizeWarpAddresses(values []string) ([]string, error) {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if prefix, err := netip.ParsePrefix(value); err == nil {
+			result = append(result, prefix.String())
+			continue
+		}
+		address, err := netip.ParseAddr(value)
+		if err != nil {
+			return nil, fmt.Errorf("некорректный WARP address %q", value)
+		}
+		result = append(result, netip.PrefixFrom(address, address.BitLen()).String())
+	}
+	return result, nil
 }
 
 func validateWireGuardKeys(value WarpSecrets) error {

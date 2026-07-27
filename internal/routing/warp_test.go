@@ -79,7 +79,7 @@ func TestWarpRegistrationAPI(t *testing.T) {
 		if r.Method != http.MethodPost || r.Header.Get("CF-Client-Version") != warpClientVersion {
 			t.Errorf("unexpected request")
 		}
-		body := `{"id":"device","token":"token","config":{"client_id":"AQID","interface":{"addresses":{"v4":"172.16.0.2/32","v6":"2606:4700:110:1::2/128"}},"peers":[{"public_key":"` + key + `","endpoint":{"host":"engage.cloudflareclient.com:2408"}}]},"account":{"license":"license"}}`
+		body := `{"id":"device","token":"token","config":{"client_id":"AQID","interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110:1::2"}},"peers":[{"public_key":"` + key + `","endpoint":{"host":"engage.cloudflareclient.com:2408"}}]},"account":{"license":"license"}}`
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
 	warp, err := registerWarp(context.Background(), true, "https://unit.test/reg", client)
@@ -89,8 +89,24 @@ func TestWarpRegistrationAPI(t *testing.T) {
 	if warp.Source != "registered" || len(warp.Reserved) != 3 || warp.AccessToken != "token" || warp.HealthPass == "" {
 		t.Fatal("unexpected registration response mapping")
 	}
+	if strings.Join(warp.Addresses, ",") != "172.16.0.2/32,2606:4700:110:1::2/128" {
+		t.Fatalf("unexpected normalized addresses: %v", warp.Addresses)
+	}
 	if _, err := registerWarp(context.Background(), false, "https://unit.test/reg", client); err == nil {
 		t.Fatal("terms confirmation must be required")
+	}
+}
+
+func TestNormalizeWarpAddressesPreservesPrefixes(t *testing.T) {
+	got, err := normalizeWarpAddresses([]string{" 172.16.0.2/32 ", "2606:4700:110:1::2/128", ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "172.16.0.2/32,2606:4700:110:1::2/128" {
+		t.Fatalf("unexpected addresses: %v", got)
+	}
+	if _, err := normalizeWarpAddresses([]string{"not-an-address"}); err == nil {
+		t.Fatal("invalid address must fail")
 	}
 }
 
