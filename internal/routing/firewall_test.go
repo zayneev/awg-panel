@@ -1,7 +1,10 @@
 package routing
 
 import (
+	"context"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,7 +21,7 @@ func TestNFTScriptIsScopedAndOrdered(t *testing.T) {
 		{ID: "client-warp", Enabled: true, Scope: "clients", Clients: []string{"phone"}, Domains: []string{"client.test"}, Outbound: "warp", Priority: 10},
 		{ID: "client-direct", Enabled: true, Scope: "clients", Clients: []string{"phone"}, Domains: []string{"override.test"}, Outbound: "direct", Priority: 20},
 	}
-	script, err := BuildNFTScript(cfg, value, []model.Client{{Name: "phone", IP: "10.8.0.2", ClientIPv6: "fd00::2"}}, []netip.Addr{netip.MustParseAddr("198.51.100.20")})
+	script, err := BuildNFTScript(cfg, value, []model.Client{{Name: "phone", IP: "10.8.0.2", ClientIPv6: "fd00::2"}}, []netip.Addr{netip.MustParseAddr("198.51.100.20")}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,10 +53,44 @@ func TestNFTScriptIsScopedAndOrdered(t *testing.T) {
 	}
 }
 
+func TestNFTScriptIPv4OnlyOmitsIPv6Rules(t *testing.T) {
+	value := DefaultConfig()
+	value.Rules = []model.RoutingRule{{ID: "global-warp", Enabled: true, Scope: "global", Domains: []string{"warp.test"}, Outbound: "warp"}}
+	script, err := BuildNFTScript(config.Default(), value, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(script, "tproxy ip to :17890") {
+		t.Fatalf("missing IPv4 tproxy rule\n%s", script)
+	}
+	if strings.Contains(script, "tproxy ip6") {
+		t.Fatalf("IPv4-only script contains an IPv6 tproxy rule\n%s", script)
+	}
+	if len(policyFamilies(false)) != 1 || len(policyFamilies(true)) != 2 {
+		t.Fatal("policy route families do not follow IPv6 availability")
+	}
+}
+
+func TestIPv6PolicyAvailabilityUsesLoopbackAddress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ip")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '    inet6 ::1/128 scope host\\n'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if !(Firewall{IPBinary: path}).IPv6PolicyAvailable(context.Background()) {
+		t.Fatal("IPv6 loopback address was not detected")
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if (Firewall{IPBinary: path}).IPv6PolicyAvailable(context.Background()) {
+		t.Fatal("IPv6 was reported available without a loopback address")
+	}
+}
+
 func TestNFTUnknownClientFailsClosed(t *testing.T) {
 	value := DefaultConfig()
 	value.Rules = []model.RoutingRule{{ID: "client", Enabled: true, Scope: "clients", Clients: []string{"missing"}, Domains: []string{"example.com"}, Outbound: "warp"}}
-	if _, err := BuildNFTScript(config.Default(), value, nil, nil); err == nil {
+	if _, err := BuildNFTScript(config.Default(), value, nil, nil, true); err == nil {
 		t.Fatal("unknown client must fail instead of widening the rule")
 	}
 }

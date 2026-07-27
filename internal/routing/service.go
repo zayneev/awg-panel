@@ -96,6 +96,7 @@ func (s *RoutingService) Status(ctx context.Context) model.RoutingStatus {
 
 func (s *RoutingService) Check(ctx context.Context) model.RoutingCheck {
 	check := model.RoutingCheck{OK: true}
+	ipv6Policy := false
 	value, err := s.store.LoadConfig()
 	if err != nil {
 		check.Errors = append(check.Errors, err.Error())
@@ -107,6 +108,11 @@ func (s *RoutingService) Check(ctx context.Context) model.RoutingCheck {
 	}
 	if _, err := exec.LookPath("ip"); err != nil {
 		check.Errors = append(check.Errors, "не найден ip")
+	} else {
+		ipv6Policy = s.firewall.IPv6PolicyAvailable(ctx)
+		if !ipv6Policy {
+			check.Warnings = append(check.Warnings, "IPv6 отключён на loopback; WARP routing будет работать только для IPv4")
+		}
 	}
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		check.Errors = append(check.Errors, "не найден systemctl")
@@ -131,7 +137,7 @@ func (s *RoutingService) Check(ctx context.Context) model.RoutingCheck {
 		check.Errors = append(check.Errors, "прочитать клиентов: "+clientsErr.Error())
 	}
 	if clientsErr == nil {
-		if script, err := BuildNFTScript(s.cfg, value, clients, LocalAddresses()); err != nil {
+		if script, err := BuildNFTScript(s.cfg, value, clients, LocalAddresses(), ipv6Policy); err != nil {
 			check.Errors = append(check.Errors, err.Error())
 		} else if _, err := exec.LookPath("nft"); err == nil {
 			if err := s.firewall.Check(ctx, script); err != nil {
@@ -145,11 +151,7 @@ func (s *RoutingService) Check(ctx context.Context) model.RoutingCheck {
 		}
 	}
 	if !unitActive(ctx, dnsUnit) {
-		hosts := []string{s.cfg.DNSListen}
-		if s.cfg.DNSListen == "0.0.0.0" {
-			hosts = append(hosts, "::")
-		}
-		for _, host := range hosts {
+		for _, host := range dnsListenHosts(s.cfg.DNSListen, ipv6Policy) {
 			if err := portAvailable(host, s.cfg.DNSPort, true); err != nil {
 				check.Errors = append(check.Errors, fmt.Sprintf("DNS-порт %s занят: %v", host, err))
 			}
@@ -221,11 +223,12 @@ func (s *RoutingService) Enable(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	script, err := BuildNFTScript(s.cfg, value, clients, LocalAddresses())
+	ipv6Policy := s.firewall.IPv6PolicyAvailable(ctx)
+	script, err := BuildNFTScript(s.cfg, value, clients, LocalAddresses(), ipv6Policy)
 	if err != nil {
 		return err
 	}
-	if err := s.firewall.Apply(ctx, script, s.cfg); err != nil {
+	if err := s.firewall.Apply(ctx, script, s.cfg, ipv6Policy); err != nil {
 		return err
 	}
 	if err := systemctl(ctx, "start", dnsUnit); err != nil {
@@ -290,11 +293,12 @@ func (s *RoutingService) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	script, err := BuildNFTScript(s.cfg, value, clients, LocalAddresses())
+	ipv6Policy := s.firewall.IPv6PolicyAvailable(ctx)
+	script, err := BuildNFTScript(s.cfg, value, clients, LocalAddresses(), ipv6Policy)
 	if err != nil {
 		return err
 	}
-	if err := s.firewall.Apply(ctx, script, s.cfg); err != nil {
+	if err := s.firewall.Apply(ctx, script, s.cfg, ipv6Policy); err != nil {
 		return err
 	}
 	return markApplied(value)
@@ -508,11 +512,12 @@ func (s *RoutingService) WarpTest(ctx context.Context) (model.WarpStatus, error)
 	if err != nil {
 		return status, err
 	}
-	script, err := BuildNFTScript(s.cfg, value, clients, LocalAddresses())
+	ipv6Policy := s.firewall.IPv6PolicyAvailable(ctx)
+	script, err := BuildNFTScript(s.cfg, value, clients, LocalAddresses(), ipv6Policy)
 	if err != nil {
 		return status, err
 	}
-	if err := s.firewall.Apply(ctx, script, s.cfg); err != nil {
+	if err := s.firewall.Apply(ctx, script, s.cfg, ipv6Policy); err != nil {
 		return status, err
 	}
 	return status, markApplied(value)
@@ -581,11 +586,12 @@ func (s *RoutingService) Recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	script, err := BuildNFTScript(s.cfg, value, clients, LocalAddresses())
+	ipv6Policy := s.firewall.IPv6PolicyAvailable(ctx)
+	script, err := BuildNFTScript(s.cfg, value, clients, LocalAddresses(), ipv6Policy)
 	if err != nil {
 		return err
 	}
-	if err := s.firewall.Apply(ctx, script, s.cfg); err != nil {
+	if err := s.firewall.Apply(ctx, script, s.cfg, ipv6Policy); err != nil {
 		return err
 	}
 	return markApplied(value)

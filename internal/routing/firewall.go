@@ -21,7 +21,7 @@ type Firewall struct {
 	IPBinary  string
 }
 
-func BuildNFTScript(cfg config.Config, value model.RoutingConfig, clients []model.Client, local []netip.Addr) (string, error) {
+func BuildNFTScript(cfg config.Config, value model.RoutingConfig, clients []model.Client, local []netip.Addr, ipv6Policy bool) (string, error) {
 	value, err := NormalizeConfig(value)
 	if err != nil {
 		return "", err
@@ -82,7 +82,9 @@ func BuildNFTScript(cfg config.Config, value model.RoutingConfig, clients []mode
 				}
 				v4, v6 := ruleSources(rule, clientAddresses)
 				writeNFTRule(&out, rule, false, v4, cfg)
-				writeNFTRule(&out, rule, true, v6, cfg)
+				if ipv6Policy {
+					writeNFTRule(&out, rule, true, v6, cfg)
+				}
 			}
 		}
 	}
@@ -164,7 +166,7 @@ func (f Firewall) Check(ctx context.Context, script string) error {
 	return f.nftInput(ctx, []string{"-c", "-f", "-"}, dryRun)
 }
 
-func (f Firewall) Apply(ctx context.Context, script string, cfg config.Config) error {
+func (f Firewall) Apply(ctx context.Context, script string, cfg config.Config, ipv6Policy bool) error {
 	if err := f.Check(ctx, script); err != nil {
 		return err
 	}
@@ -176,7 +178,7 @@ func (f Firewall) Apply(ctx context.Context, script string, cfg config.Config) e
 		_ = f.Disable(ctx, cfg)
 		return err
 	}
-	if err := f.addPolicy(ctx, cfg); err != nil {
+	if err := f.addPolicy(ctx, cfg, ipv6Policy); err != nil {
 		_ = f.Disable(ctx, cfg)
 		return err
 	}
@@ -209,8 +211,8 @@ func (f Firewall) removePolicy(ctx context.Context, cfg config.Config) error {
 	return errors.Join(failures...)
 }
 
-func (f Firewall) addPolicy(ctx context.Context, cfg config.Config) error {
-	for _, family := range [][]string{{}, {"-6"}} {
+func (f Firewall) addPolicy(ctx context.Context, cfg config.Config, ipv6Policy bool) error {
+	for _, family := range policyFamilies(ipv6Policy) {
 		rule := append(append([]string{}, family...), "rule", "add", "priority", strconv.Itoa(cfg.RouteTable), "fwmark", fmt.Sprintf("0x%x", cfg.FWMark), "lookup", strconv.Itoa(cfg.RouteTable))
 		if err := f.run(ctx, f.ip(), rule...); err != nil {
 			return err
@@ -221,6 +223,19 @@ func (f Firewall) addPolicy(ctx context.Context, cfg config.Config) error {
 		}
 	}
 	return nil
+}
+
+func policyFamilies(ipv6 bool) [][]string {
+	result := [][]string{{}}
+	if ipv6 {
+		result = append(result, []string{"-6"})
+	}
+	return result
+}
+
+func (f Firewall) IPv6PolicyAvailable(ctx context.Context) bool {
+	output, err := exec.CommandContext(ctx, f.ip(), "-6", "addr", "show", "dev", "lo").Output()
+	return err == nil && strings.Contains(string(output), "inet6 ")
 }
 
 func (f Firewall) nftInput(ctx context.Context, args []string, input string) error {

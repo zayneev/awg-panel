@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,5 +91,17 @@ func TestMatchedDNSFailsClosedWhenNFTUpdateFails(t *testing.T) {
 	response.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}, A: net.ParseIP("8.8.8.8")}}
 	if err := proxy.classify(context.Background(), request, response); err == nil {
 		t.Fatal("matched response must not be returned when nft classification fails")
+	}
+}
+
+func TestDNSListenHostsFollowIPv6Availability(t *testing.T) {
+	if got := strings.Join(dnsListenHosts("0.0.0.0", false), ","); got != "0.0.0.0" {
+		t.Fatalf("unexpected IPv4-only listeners: %s", got)
+	}
+	if got := strings.Join(dnsListenHosts("0.0.0.0", true), ","); got != "0.0.0.0,::" {
+		t.Fatalf("unexpected dual-stack listeners: %s", got)
+	}
+	if got := strings.Join(dnsListenHosts("127.0.0.1", true), ","); got != "127.0.0.1" {
+		t.Fatalf("explicit listener was widened: %s", got)
 	}
 }

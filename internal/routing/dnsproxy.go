@@ -224,10 +224,7 @@ func (u NFTSetUpdater) Add(ctx context.Context, set string, addr netip.Addr, ttl
 
 func RunDNSProxy(ctx context.Context, proxy *DNSProxy) error {
 	handler := dns.HandlerFunc(proxy.ServeDNS)
-	hosts := []string{proxy.cfg.DNSListen}
-	if proxy.cfg.DNSListen == "0.0.0.0" {
-		hosts = append(hosts, "::")
-	}
+	hosts := dnsListenHosts(proxy.cfg.DNSListen, Firewall{}.IPv6PolicyAvailable(ctx))
 	servers := make([]*dns.Server, 0, len(hosts)*2)
 	for _, host := range hosts {
 		family := "4"
@@ -258,4 +255,12 @@ func RunDNSProxy(ctx context.Context, proxy *DNSProxy) error {
 		shutdown()
 		return err
 	}
+}
+
+func dnsListenHosts(listen string, ipv6 bool) []string {
+	hosts := []string{listen}
+	if listen == "0.0.0.0" && ipv6 {
+		hosts = append(hosts, "::")
+	}
+	return hosts
 }

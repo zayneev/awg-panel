@@ -118,6 +118,7 @@ sudo awgpanel restart
 
 - DNS-классификатор принимает только перенаправленные с `awg0` UDP/TCP-запросы на порту 1053, возвращает исходный ответ и наполняет nftables sets по TTL (30–3600 секунд);
 - только реальные A/AAAA-адреса совпавших правил попадают в Xray TProxy на порту 17890;
+- если IPv6 отключён на loopback-интерфейсе VPS, панель не меняет sysctl и автоматически включает только IPv4 TProxy/DNS listeners и policy route; `routing check` сообщает об этом предупреждением;
 - Xray использует собственный WireGuard outbound с `noKernelTun: true`; его конфиг, регистрация и порты не связаны с 3x-ui;
 - весь остальной трафик остаётся в обычном forwarding Linux и не проходит через Xray;
 - остановка DNS или Xray удаляет только таблицу `inet awgpanel` и policy rules awgpanel, включая direct-fallback;

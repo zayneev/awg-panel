@@ -66,7 +66,7 @@ func TestNetworkNamespaceRouting(t *testing.T) {
 		{ID: "client-direct", Enabled: true, Scope: "clients", Clients: []string{"phone"}, Domains: []string{"direct.test"}, Outbound: "direct", Priority: 1},
 		{ID: "global-warp", Enabled: true, Scope: "global", Domains: []string{"warp.test"}, Outbound: "warp", Priority: 2},
 	}
-	script, err := BuildNFTScript(cfg, value, []model.Client{{Name: "phone", IP: "10.77.0.2", ClientIPv6: "fd77::2"}}, nil)
+	script, err := BuildNFTScript(cfg, value, []model.Client{{Name: "phone", IP: "10.77.0.2", ClientIPv6: "fd77::2"}}, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
