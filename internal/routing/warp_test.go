@@ -31,7 +31,7 @@ func TestWGQuickParserAndXrayNoKernelTun(t *testing.T) {
 	}
 	b, _ := json.Marshal(value)
 	text := string(b)
-	if !strings.Contains(text, `"noKernelTun":true`) || !strings.Contains(text, `"listen":"127.0.0.1"`) || !strings.Contains(text, `"auth":"password"`) {
+	if !strings.Contains(text, `"noKernelTun":true`) || !strings.Contains(text, `"domainStrategy":"ForceIPv4"`) || !strings.Contains(text, `"listen":"127.0.0.1"`) || !strings.Contains(text, `"auth":"password"`) {
 		t.Fatalf("unsafe Xray config: %s", text)
 	}
 }
@@ -82,7 +82,7 @@ func TestWarpRegistrationAPI(t *testing.T) {
 		if r.Method != http.MethodPost || r.Header.Get("CF-Client-Version") != warpClientVersion {
 			t.Errorf("unexpected request")
 		}
-		body := `{"id":"device","token":"token","config":{"client_id":"AQID","interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110:1::2"}},"peers":[{"public_key":"` + key + `","endpoint":{"host":"engage.cloudflareclient.com:2408"}}]},"account":{"license":"license"}}`
+		body := `{"id":"device","token":"token","config":{"client_id":"AQID","interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110:1::2"}},"peers":[{"public_key":"` + key + `","endpoint":{"v4":"162.159.192.1:2408","v6":"[2606:4700:d0::a29f:c001]:2408","host":"engage.cloudflareclient.com:2408"}}]},"account":{"license":"license"}}`
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
 	warp, err := registerWarp(context.Background(), true, "https://unit.test/reg", client)
@@ -94,6 +94,9 @@ func TestWarpRegistrationAPI(t *testing.T) {
 	}
 	if strings.Join(warp.Addresses, ",") != "172.16.0.2/32,2606:4700:110:1::2/128" {
 		t.Fatalf("unexpected normalized addresses: %v", warp.Addresses)
+	}
+	if warp.Endpoint != "162.159.192.1:2408" {
+		t.Fatalf("registration did not prefer IPv4 endpoint: %s", warp.Endpoint)
 	}
 	if _, err := registerWarp(context.Background(), false, "https://unit.test/reg", client); err == nil {
 		t.Fatal("terms confirmation must be required")

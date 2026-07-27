@@ -172,9 +172,12 @@ func registerWarp(ctx context.Context, acceptTerms bool, apiURL string, client *
 	if len(envelope.Config.Peers) == 0 {
 		return WarpSecrets{}, errors.New("WARP registration не вернула peer")
 	}
-	endpoint := envelope.Config.Peers[0].Endpoint.Host
+	endpoint := envelope.Config.Peers[0].Endpoint.V4
 	if endpoint == "" {
-		endpoint = envelope.Config.Peers[0].Endpoint.V4
+		endpoint = envelope.Config.Peers[0].Endpoint.Host
+	}
+	if endpoint == "" {
+		endpoint = envelope.Config.Peers[0].Endpoint.V6
 	}
 	reserved, _ := base64.StdEncoding.DecodeString(envelope.Config.ClientID)
 	user, pass, err := newHealthCredentials()
@@ -292,7 +295,7 @@ func BuildXrayConfig(cfg config.Config, warp WarpSecrets) (map[string]any, error
 	}
 	settings := map[string]any{
 		"secretKey": warp.PrivateKey, "address": warp.Addresses, "peers": []any{peer},
-		"mtu": warp.MTU, "noKernelTun": true, "domainStrategy": "ForceIP",
+		"mtu": warp.MTU, "noKernelTun": true, "domainStrategy": "ForceIPv4",
 	}
 	if len(warp.Reserved) == 3 {
 		settings["reserved"] = warp.Reserved
