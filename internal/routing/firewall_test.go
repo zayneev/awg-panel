@@ -37,8 +37,16 @@ func TestNFTScriptIsScopedAndOrdered(t *testing.T) {
 	if !(clientDirect < clientWarp && clientWarp < globalDirect && globalDirect < globalWarp) {
 		t.Fatalf("wrong rule order\n%s", script)
 	}
-	if !strings.Contains(script, "ip daddr 198.51.100.20 return") || !strings.Contains(script, "tproxy to :17890") {
-		t.Fatalf("missing local exclusion or tproxy")
+	if !strings.Contains(script, "ip daddr 198.51.100.20 return") {
+		t.Fatal("missing local exclusion")
+	}
+	for _, expected := range []string{"ip daddr @" + RuleSetName("global-warp", false) + " counter meta mark set 0xa61 tproxy ip to :17890 accept", "ip6 daddr @" + RuleSetName("global-warp", true) + " counter meta mark set 0xa61 tproxy ip6 to :17890 accept"} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("missing family-specific tproxy rule %q\n%s", expected, script)
+		}
+	}
+	if strings.Contains(script, " tproxy to :") {
+		t.Fatal("found tproxy rule without an explicit address family")
 	}
 }
 

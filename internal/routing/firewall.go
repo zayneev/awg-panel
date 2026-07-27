@@ -129,7 +129,11 @@ func writeNFTRule(out *strings.Builder, rule model.RoutingRule, ipv6 bool, sourc
 		out.WriteString("counter return\n")
 		return
 	}
-	fmt.Fprintf(out, "counter meta mark set 0x%x tproxy to :%d accept\n", cfg.FWMark, cfg.TProxyPort)
+	// Older nftables releases do not infer the TPROXY family after an ip/ip6
+	// address expression in an inet table. Keep the target address implicit,
+	// but state the family explicitly so the rule is accepted by both the old
+	// evaluator and newer releases.
+	fmt.Fprintf(out, "counter meta mark set 0x%x tproxy %s to :%d accept\n", cfg.FWMark, family, cfg.TProxyPort)
 }
 
 func parseAddress(raw string) (netip.Addr, error) {
