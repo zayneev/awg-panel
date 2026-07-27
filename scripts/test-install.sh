@@ -37,10 +37,17 @@ assert_failure() {
   if "$@"; then fail "$name"; else pass "$name"; fi
 }
 
+assert_contains() {
+  local name="$1" needle="$2" value="$3"
+  if [[ "$value" == *"$needle"* ]]; then pass "$name"; else fail "$name (нет строки: $needle)"; fi
+}
+
 assert_equal 'amd64 из x86_64' amd64 "$(machine_arch x86_64)"
 assert_equal 'arm64 из aarch64' arm64 "$(machine_arch aarch64)"
 assert_failure 'неподдерживаемая архитектура' machine_arch riscv64
 assert_equal 'имя amd64 asset' awgpanel-linux-amd64 "$(panel_asset x86_64)"
+assert_equal 'архив Xray amd64' 'Xray-linux-64.zip aa11c3685c71da0ffc71e511db50404609e7e963bb914b048f59a6a00af8930e' "$(xray_asset_and_sha x86_64)"
+assert_equal 'архив Xray arm64' 'Xray-linux-arm64-v8a.zip 89cfe01674d7c9f6847b7dd9389537be9acb3b9dc3c6cb9fdeba87a3e4e57fc1' "$(xray_asset_and_sha aarch64)"
 assert_equal 'URL latest' "https://github.com/zayneev/awg-panel/releases/latest/download" "$(release_base_url '')"
 assert_equal 'URL версии' "https://github.com/zayneev/awg-panel/releases/download/v0.3.0" "$(release_base_url 0.3.0)"
 assert_equal 'minor из patch-версии' 5.21 "$(version_minor 5.21.2)"
@@ -88,6 +95,112 @@ assert_failure 'xray archive требует routing' bash -c "AWGPANEL_INSTALL_L
 
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
+
+xray_good="$tmp/xray-good"
+cat >"$xray_good" <<'XRAY'
+#!/usr/bin/env bash
+printf 'Xray 26.7.11 (Xray, Penetrates Everything.)\n'
+for i in $(seq 1 20000); do
+  printf 'extra version output %s\n' "$i"
+done
+XRAY
+chmod +x "$xray_good"
+
+set +e
+(set -o pipefail; "$xray_good" version | grep -Fq "Xray $XRAY_VERSION")
+old_pipeline_rc=$?
+set -e
+assert_equal 'регрессия старой Xray-проверки воспроизводит SIGPIPE' 141 "$old_pipeline_rc"
+assert_equal 'версия Xray читается без SIGPIPE' "$XRAY_VERSION" "$(verify_xray_binary_version "$xray_good" "$XRAY_VERSION")"
+
+xray_wrong="$tmp/xray-wrong"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "Xray 26.7.10 (unexpected)\\n"' >"$xray_wrong"
+chmod +x "$xray_wrong"
+set +e
+wrong_output="$(verify_xray_binary_version "$xray_wrong" "$XRAY_VERSION")"
+wrong_rc=$?
+set -e
+assert_equal 'другая версия Xray отклоняется' 3 "$wrong_rc"
+assert_equal 'другая фактическая версия Xray сохраняется' 26.7.10 "$wrong_output"
+
+printf '%s\n' '#!/usr/bin/env bash' 'printf "Xray 26.7.110 (unexpected)\\n"' >"$xray_wrong"
+set +e
+wrong_output="$(verify_xray_binary_version "$xray_wrong" "$XRAY_VERSION")"
+wrong_rc=$?
+set -e
+assert_equal 'похожая версия Xray отклоняется' 3 "$wrong_rc"
+assert_equal 'фактическая версия Xray сохраняется для диагностики' 26.7.110 "$wrong_output"
+
+xray_malformed="$tmp/xray-malformed"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "version unavailable\\n"' >"$xray_malformed"
+chmod +x "$xray_malformed"
+set +e
+verify_xray_binary_version "$xray_malformed" "$XRAY_VERSION" >/dev/null
+malformed_rc=$?
+set -e
+assert_equal 'вывод без версии Xray отклоняется' 2 "$malformed_rc"
+
+xray_failing="$tmp/xray-failing"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 9' >"$xray_failing"
+chmod +x "$xray_failing"
+set +e
+verify_xray_binary_version "$xray_failing" "$XRAY_VERSION" >/dev/null
+failing_rc=$?
+set -e
+assert_equal 'не запускающийся Xray отклоняется' 1 "$failing_rc"
+
+xray_fixture="$tmp/xray-fixture"
+mkdir "$xray_fixture"
+cp "$xray_good" "$xray_fixture/xray"
+printf 'geosite fixture\n' >"$xray_fixture/geosite.dat"
+printf 'geoip fixture\n' >"$xray_fixture/geoip.dat"
+(cd "$xray_fixture" && zip -q "$tmp/xray-fixture.zip" xray geosite.dat geoip.dat)
+run_xray_stage() {
+  local archive="$1" stage="$2" sha
+  sha="$(sha256sum "$archive" | awk '{print $1}')"
+  AWGPANEL_TEST_ARCHIVE="$archive" AWGPANEL_TEST_SHA="$sha" AWGPANEL_TEST_STAGE="$stage" AWGPANEL_TEST_PROJECT="$PROJECT_DIR" bash -c '
+  set -Eeuo pipefail
+  export AWGPANEL_INSTALL_LIB_ONLY=1
+  source "$AWGPANEL_TEST_PROJECT/install.sh"
+  xray_asset_and_sha() { printf "Xray-linux-64.zip %s\n" "$AWGPANEL_TEST_SHA"; }
+  WITH_ROUTING=1
+  XRAY_ARCHIVE="$AWGPANEL_TEST_ARCHIVE"
+  WORK_TMP="$AWGPANEL_TEST_STAGE"
+  mkdir "$WORK_TMP"
+  stage_routing >/dev/null
+  test -x "$WORK_TMP/xray/xray"
+  test -f "$WORK_TMP/xray/geosite.dat"
+  test -f "$WORK_TMP/xray/geoip.dat"
+'
+}
+assert_success 'локальный Xray ZIP проходит SHA, распаковку и проверку версии' run_xray_stage "$tmp/xray-fixture.zip" "$tmp/xray-stage-good"
+
+cp "$xray_wrong" "$xray_fixture/xray"
+(cd "$xray_fixture" && zip -q "$tmp/xray-wrong.zip" xray geosite.dat geoip.dat)
+set +e
+wrong_stage_output="$(run_xray_stage "$tmp/xray-wrong.zip" "$tmp/xray-stage-wrong" 2>&1)"
+wrong_stage_rc=$?
+set -e
+assert_equal 'stage отклоняет другую версию Xray' 1 "$wrong_stage_rc"
+assert_contains 'stage сообщает фактическую и ожидаемую версии Xray' 'архив содержит Xray 26.7.110; ожидалась версия 26.7.11' "$wrong_stage_output"
+
+cp "$xray_malformed" "$xray_fixture/xray"
+(cd "$xray_fixture" && zip -q "$tmp/xray-malformed.zip" xray geosite.dat geoip.dat)
+set +e
+malformed_stage_output="$(run_xray_stage "$tmp/xray-malformed.zip" "$tmp/xray-stage-malformed" 2>&1)"
+malformed_stage_rc=$?
+set -e
+assert_equal 'stage отклоняет Xray без версии' 1 "$malformed_stage_rc"
+assert_contains 'stage сообщает о нераспознанной версии Xray' 'не удалось определить версию Xray из архива' "$malformed_stage_output"
+
+cp "$xray_failing" "$xray_fixture/xray"
+(cd "$xray_fixture" && zip -q "$tmp/xray-failing.zip" xray geosite.dat geoip.dat)
+set +e
+failing_stage_output="$(run_xray_stage "$tmp/xray-failing.zip" "$tmp/xray-stage-failing" 2>&1)"
+failing_stage_rc=$?
+set -e
+assert_equal 'stage отклоняет не запускающийся Xray' 1 "$failing_stage_rc"
+assert_contains 'stage сообщает об ошибке запуска Xray' 'бинарник Xray из архива не запускается' "$failing_stage_output"
 
 check_versions() {
   local manage="$1" common="$2"

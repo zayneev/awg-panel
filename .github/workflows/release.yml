@@ -28,6 +28,7 @@ jobs:
           make release VERSION="${VERSION#v}"
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-user-static
+          bash scripts/test-xray-release.sh
           cd dist
           sha256sum -c SHA256SUMS
           test "$(./awgpanel-linux-amd64 --version)" = "awgpanel version ${VERSION#v}"

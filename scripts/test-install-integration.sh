@@ -63,14 +63,24 @@ test -x "$installed" || { printf '%s\n' 'бинарник не установл�
 test -f "$config" || { printf '%s\n' 'config.json не создан' >&2; exit 1; }
 ! grep -q 'requiredManageMinor' "$config" || { printf '%s\n' 'новый config.json содержит устаревшую политику версии' >&2; exit 1; }
 printf '%s\n' '{"custom":"preserve-me"}' >"$config"
+routing_config="$test_root/etc/awgpanel/routing/routing.json"
+warp_secrets="$test_root/etc/awgpanel/routing/warp.json"
+mkdir -p "$(dirname "$routing_config")"
+printf '%s\n' '{"routing":"preserve-me"}' >"$routing_config"
+printf '%s\n' '{"warp":"preserve-me"}' >"$warp_secrets"
+chmod 0600 "$warp_secrets"
 
 run_installer --binary="$good_panel" --non-interactive >/dev/null
 [[ "$(<"$config")" == '{"custom":"preserve-me"}' ]] || { printf '%s\n' 'config.json был перезаписан' >&2; exit 1; }
+[[ "$(<"$routing_config")" == '{"routing":"preserve-me"}' ]] || { printf '%s\n' 'routing.json был перезаписан' >&2; exit 1; }
+[[ "$(<"$warp_secrets")" == '{"warp":"preserve-me"}' ]] || { printf '%s\n' 'WARP credentials были перезаписаны' >&2; exit 1; }
 
 printf '%s\n' 'SCRIPT_VERSION="5.21.2"' >"$test_root/root/awg/manage_amneziawg.sh"
 printf '%s\n' 'AWG_COMMON_VERSION="5.21.2"' >"$test_root/root/awg/awg_common.sh"
 run_installer --binary="$good_panel" --non-interactive >/dev/null
 [[ "$(<"$config")" == '{"custom":"preserve-me"}' ]] || { printf '%s\n' 'config.json был перезаписан при обновлении на AWG 5.21' >&2; exit 1; }
+[[ "$(<"$routing_config")" == '{"routing":"preserve-me"}' ]] || { printf '%s\n' 'routing.json был перезаписан при обновлении на AWG 5.21' >&2; exit 1; }
+[[ "$(<"$warp_secrets")" == '{"warp":"preserve-me"}' ]] || { printf '%s\n' 'WARP credentials были перезаписаны при обновлении на AWG 5.21' >&2; exit 1; }
 
 bad_panel="$fixtures/awgpanel-bad"
 cat >"$bad_panel" <<'PANEL'
@@ -100,5 +110,7 @@ if run_installer --binary="$bad_panel" --non-interactive >/dev/null 2>&1; then
 fi
 [[ "$($installed --version)" == 'awgpanel version 0.3.0' ]] || { printf '%s\n' 'rollback не восстановил бинарник' >&2; exit 1; }
 [[ "$(<"$config")" == '{"custom":"preserve-me"}' ]] || { printf '%s\n' 'rollback изменил config.json' >&2; exit 1; }
+[[ "$(<"$routing_config")" == '{"routing":"preserve-me"}' ]] || { printf '%s\n' 'rollback изменил routing.json' >&2; exit 1; }
+[[ "$(<"$warp_secrets")" == '{"warp":"preserve-me"}' ]] || { printf '%s\n' 'rollback изменил WARP credentials' >&2; exit 1; }
 
-printf '%s\n' 'ok - свежая установка, сохранение config и автоматический rollback'
+printf '%s\n' 'ok - свежая установка, сохранение config/routing/WARP и автоматический rollback'

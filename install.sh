@@ -343,10 +343,29 @@ early_preflight() {
 }
 
 xray_asset_and_sha() {
-  case "$(machine_arch)" in
+  case "$(machine_arch "${1:-$(uname -m)}")" in
     amd64) printf '%s %s\n' 'Xray-linux-64.zip' 'aa11c3685c71da0ffc71e511db50404609e7e963bb914b048f59a6a00af8930e' ;;
     arm64) printf '%s %s\n' 'Xray-linux-arm64-v8a.zip' '89cfe01674d7c9f6847b7dd9389537be9acb3b9dc3c6cb9fdeba87a3e4e57fc1' ;;
   esac
+}
+
+xray_binary_version() {
+  local binary="$1" output line
+  output="$("$binary" version 2>&1)" || return 1
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^Xray[[:space:]]+([^[:space:]]+)($|[[:space:]]) ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  done <<<"$output"
+  return 2
+}
+
+verify_xray_binary_version() {
+  local actual
+  actual="$(xray_binary_version "$1")" || return $?
+  printf '%s\n' "$actual"
+  [[ "$actual" == "$2" ]] || return 3
 }
 
 download() {
@@ -401,7 +420,7 @@ validate_existing_config() {
 
 stage_routing() {
   [[ "$WITH_ROUTING" -eq 1 ]] || return 0
-  local pair xray_asset xray_sha archive
+  local pair xray_asset xray_sha archive actual_version rc
   pair="$(xray_asset_and_sha)"
   xray_asset="${pair%% *}"
   xray_sha="${pair##* }"
@@ -419,7 +438,15 @@ stage_routing() {
   for required in xray geosite.dat geoip.dat; do
     [[ -f "$WORK_TMP/xray/$required" ]] || die "в архиве Xray отсутствует $required"
   done
-  "$WORK_TMP/xray/xray" version | grep -Fq "Xray $XRAY_VERSION" || die "архив содержит неожиданную версию Xray"
+  actual_version="$(verify_xray_binary_version "$WORK_TMP/xray/xray" "$XRAY_VERSION")" || {
+    rc=$?
+    case "$rc" in
+      1) die "бинарник Xray из архива не запускается" ;;
+      2) die "не удалось определить версию Xray из архива" ;;
+      3) die "архив содержит Xray $actual_version; ожидалась версия $XRAY_VERSION" ;;
+      *) die "не удалось проверить версию Xray из архива" ;;
+    esac
+  }
 }
 
 write_default_config() {
