@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -11,8 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zayneev/awg-panel/internal/config"
+	"github.com/zayneev/awg-panel/internal/model"
 )
 
 func TestWGQuickParserAndXrayNoKernelTun(t *testing.T) {
@@ -107,6 +110,26 @@ func TestNormalizeWarpAddressesPreservesPrefixes(t *testing.T) {
 	}
 	if _, err := normalizeWarpAddresses([]string{"not-an-address"}); err == nil {
 		t.Fatal("invalid address must fail")
+	}
+}
+
+func TestWaitWarpHealthStatusRetriesStartupRace(t *testing.T) {
+	attempts := 0
+	check := func(context.Context, config.Config, WarpSecrets) (model.WarpStatus, error) {
+		attempts++
+		if attempts < 3 {
+			return model.WarpStatus{}, errors.New("connection refused")
+		}
+		return model.WarpStatus{Healthy: true, EgressIP: "203.0.113.1"}, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	status, err := waitWarpHealthStatus(ctx, config.Default(), WarpSecrets{}, check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 || !status.Healthy || status.EgressIP != "203.0.113.1" {
+		t.Fatalf("unexpected retry result: attempts=%d status=%+v", attempts, status)
 	}
 }
 

@@ -485,7 +485,15 @@ func (s *RoutingService) WarpTest(ctx context.Context) (model.WarpStatus, error)
 			defer systemctlIgnoreMissing(context.Background(), "stop", xrayUnit)
 		}
 	}
-	status, healthErr := CheckWarpHealth(ctx, s.cfg, warp)
+	var status model.WarpStatus
+	var healthErr error
+	if started {
+		healthCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		status, healthErr = waitWarpHealthStatus(healthCtx, s.cfg, warp, CheckWarpHealth)
+	} else {
+		status, healthErr = CheckWarpHealth(ctx, s.cfg, warp)
+	}
 	if healthErr != nil || !started {
 		return status, healthErr
 	}
@@ -725,15 +733,25 @@ func policyConflicts(ctx context.Context, cfg config.Config, enabled bool) []str
 }
 
 func waitWarpHealth(ctx context.Context, cfg config.Config, warp WarpSecrets) error {
+	_, err := waitWarpHealthStatus(ctx, cfg, warp, CheckWarpHealth)
+	return err
+}
+
+type warpHealthCheck func(context.Context, config.Config, WarpSecrets) (model.WarpStatus, error)
+
+func waitWarpHealthStatus(ctx context.Context, cfg config.Config, warp WarpSecrets, check warpHealthCheck) (model.WarpStatus, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	var status model.WarpStatus
+	var lastErr error
 	for {
-		if _, err := CheckWarpHealth(ctx, cfg, warp); err == nil {
-			return nil
+		status, lastErr = check(ctx, cfg, warp)
+		if lastErr == nil {
+			return status, nil
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("WARP health-check: %w", ctx.Err())
+			return status, fmt.Errorf("WARP health-check: %w; последняя ошибка: %v", ctx.Err(), lastErr)
 		case <-ticker.C:
 		}
 	}
