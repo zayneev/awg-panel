@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +42,9 @@ type RoutingManager interface {
 	RoutingRuleToggle(string, bool) error
 	RoutingRuleDelete(string) error
 	RoutingWarpRegister(context.Context, bool) error
+	RoutingWarpImport(string) error
 	RoutingWarpTest(context.Context) (model.WarpStatus, error)
+	RoutingWarpForget(context.Context) error
 }
 
 type screen int
@@ -75,6 +78,9 @@ const (
 	screenRoutingConfirm
 	screenRoutingActionConfirm
 	screenRoutingWarpRegisterConfirm
+	screenRoutingWarpImportPath
+	screenRoutingWarpImportConfirm
+	screenRoutingWarpForgetConfirm
 )
 
 var (
@@ -116,13 +122,14 @@ type modelUI struct {
 	secretValue string
 	createdName string
 
-	routingTab    int
-	routingCursor int
-	routingStatus model.RoutingStatus
-	routingRules  []model.RoutingRule
-	routingRule   model.RoutingRule
-	routingEdit   bool
-	routingAction string
+	routingTab     int
+	routingCursor  int
+	routingStatus  model.RoutingStatus
+	routingRules   []model.RoutingRule
+	routingRule    model.RoutingRule
+	routingEdit    bool
+	routingAction  string
+	warpImportPath string
 }
 
 type loadMsg struct {
@@ -152,11 +159,12 @@ type routingLoadMsg struct {
 	err    error
 }
 
-type warpRegisterMsg struct {
-	status     model.RoutingStatus
-	rules      []model.RoutingRule
-	registered bool
-	err        error
+type warpSetupMsg struct {
+	status  model.RoutingStatus
+	rules   []model.RoutingRule
+	changed bool
+	notice  string
+	err     error
 }
 
 func Run(m Manager, version string) error {
@@ -256,10 +264,11 @@ func (m *modelUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.routingCursor = max(0, len(m.routingRules)-1)
 		}
 		return m, nil
-	case warpRegisterMsg:
+	case warpSetupMsg:
 		m.busy, m.loading = false, false
 		m.screen = screenRouting
-		if msg.registered {
+		m.input, m.warpImportPath = "", ""
+		if msg.changed {
 			m.routingStatus, m.routingRules = msg.status, msg.rules
 			if m.routingCursor >= len(m.routingRules) {
 				m.routingCursor = max(0, len(m.routingRules)-1)
@@ -271,7 +280,7 @@ func (m *modelUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
-		m.notice = "WARP зарегистрирован; health-check пройден."
+		m.notice = msg.notice
 		return m, nil
 	case tea.KeyPressMsg:
 		return m.handleKey(msg.String())
@@ -447,6 +456,22 @@ func (m *modelUI) handleKey(key string) (tea.Model, tea.Cmd) {
 		case "esc", "n", "н":
 			m.screen = screenRouting
 		}
+	case screenRoutingWarpImportConfirm:
+		switch key {
+		case "enter", "y", "д":
+			m.busy, m.err = true, nil
+			return m, routingWarpImportCommand(m.routing, m.warpImportPath)
+		case "esc", "n", "н":
+			m.input, m.warpImportPath, m.screen = "", "", screenRouting
+		}
+	case screenRoutingWarpForgetConfirm:
+		switch key {
+		case "enter", "y", "д":
+			m.busy, m.err = true, nil
+			return m, routingActionCommand(m.routing, "forget")
+		case "esc", "n", "н":
+			m.screen = screenRouting
+		}
 	}
 	return m, nil
 }
@@ -605,9 +630,20 @@ func (m *modelUI) handleRoutingKey(key string) (tea.Model, tea.Cmd) {
 			if m.routingStatus.Installed && !m.routingStatus.Enabled && !m.routingStatus.Warp.Configured {
 				m.screen = screenRoutingWarpRegisterConfirm
 			}
+		case "i":
+			if m.routingStatus.Installed && !m.routingStatus.Enabled {
+				m.input, m.warpImportPath, m.err = "", "", nil
+				m.screen = screenRoutingWarpImportPath
+			}
+		case "f":
+			if m.routingStatus.Installed && !m.routingStatus.Enabled && m.routingStatus.Warp.Configured {
+				m.screen = screenRoutingWarpForgetConfirm
+			}
 		case "t":
-			m.busy = true
-			return m, routingActionCommand(m.routing, "test")
+			if m.routingStatus.Installed && m.routingStatus.Warp.Configured {
+				m.busy = true
+				return m, routingActionCommand(m.routing, "test")
+			}
 		}
 	}
 	return m, nil
@@ -623,6 +659,8 @@ func (m *modelUI) handleInputKey(key string) (tea.Model, tea.Cmd) {
 			m.screen = screenDetail
 		case screenRoutingRuleID, screenRoutingDomains, screenRoutingGeoSites, screenRoutingClients, screenRoutingPriority:
 			m.screen = screenRouting
+		case screenRoutingWarpImportPath:
+			m.input, m.warpImportPath, m.screen = "", "", screenRouting
 		}
 		m.input = ""
 		return m, nil
@@ -690,6 +728,12 @@ func (m *modelUI) handleInputKey(key string) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.routingRule.Priority, m.input, m.screen = priority, "", screenRoutingConfirm
+		case screenRoutingWarpImportPath:
+			if !filepath.IsAbs(value) {
+				m.err = errors.New("укажите абсолютный путь к .conf")
+				return m, nil
+			}
+			m.warpImportPath, m.input, m.err, m.screen = filepath.Clean(value), "", nil, screenRoutingWarpImportConfirm
 		}
 		return m, nil
 	}
@@ -798,6 +842,12 @@ func (m *modelUI) View() tea.View {
 			content = titleStyle.Render("Подтвердите сетевую операцию") + "\n\n" + m.routingAction + "\n\nИзменяются только объекты awgpanel.\nEnter подтвердить · Esc отменить"
 		case screenRoutingWarpRegisterConfirm:
 			content = titleStyle.Render("Зарегистрировать WARP?") + "\n\nБудет создано отдельное устройство Cloudflare WARP.\nНажимая Enter, вы подтверждаете принятие условий Cloudflare WARP.\nСекреты сохранятся локально с правами 0600 и не будут показаны.\nПосле регистрации автоматически выполнится health-check.\n\nEnter принять условия и зарегистрировать · Esc отменить"
+		case screenRoutingWarpImportPath:
+			content = m.viewInput("Импорт WARP", "Путь к wg-quick .conf", "укажите абсолютный путь на сервере, например /root/warp.conf")
+		case screenRoutingWarpImportConfirm:
+			content = titleStyle.Render("Импортировать WARP-конфиг?") + fmt.Sprintf("\n\nФайл: %s\n\nТекущие WARP credentials будут заменены.\nИсходный .conf останется без изменений.\nСекреты не будут показаны, после импорта выполнится health-check.\n\nEnter импортировать · Esc отменить", m.warpImportPath)
+		case screenRoutingWarpForgetConfirm:
+			content = titleStyle.Render("Удалить WARP credentials?") + "\n\nБудут удалены локальные WARP credentials и сгенерированный Xray-конфиг.\nRouting должен оставаться выключенным. Правила доменов сохранятся.\n\nEnter удалить · Esc отменить"
 		}
 	}
 	if m.busy {
@@ -899,15 +949,27 @@ func (m *modelUI) viewRouting() string {
 		return b.String()
 	default:
 		warp := m.routingStatus.Warp
-		actions := "[T] проверить WARP  [R] refresh  [Esc] назад"
-		hint := "Импорт секретного конфига доступен через CLI."
+		actions := "[R] refresh  [Esc] назад"
+		hint := ""
 		if !m.routingStatus.Installed {
 			hint = "Компоненты routing не установлены. Установите их с --with-routing."
-		} else if m.routingStatus.Enabled && !warp.Configured {
-			hint = "Перед регистрацией WARP выключите routing. " + hint
-		} else if !warp.Configured {
-			actions = "[G] зарегистрировать WARP  " + actions
-			hint = "Регистрация потребует отдельного подтверждения условий Cloudflare. " + hint
+		} else if m.routingStatus.Enabled {
+			if warp.Configured {
+				actions = "[T] проверить WARP  " + actions
+			}
+			hint = "Для регистрации, импорта или удаления credentials сначала выключите routing."
+		} else {
+			if warp.Configured {
+				actions = "[T] проверить WARP  " + actions
+			}
+			actions = "[I] импортировать .conf  " + actions
+			if warp.Configured {
+				actions = "[F] удалить credentials  " + actions
+				hint = "Импорт заменит текущие credentials только после подтверждения."
+			} else {
+				actions = "[G] зарегистрировать WARP  " + actions
+				hint = "Регистрация потребует подтверждения условий Cloudflare; импорт — пути к существующему .conf."
+			}
 		}
 		return header + fmt.Sprintf("Настроен: %s\nИсточник: %s\nEndpoint: %s\nHealthy: %s\nEgress IP: %s\nColo: %s\n\n%s\n\n%s", yesNo(warp.Configured), emptyDash(warp.Source), emptyDash(warp.Endpoint), yesNo(warp.Healthy), emptyDash(warp.EgressIP), emptyDash(warp.Colo), actions, hint)
 	}
@@ -1040,6 +1102,9 @@ func routingActionCommand(m RoutingManager, action string) tea.Cmd {
 		case action == "test":
 			_, err = m.RoutingWarpTest(ctx)
 			text = "WARP health-check пройден."
+		case action == "forget":
+			err = m.RoutingWarpForget(ctx)
+			text = "Локальные WARP credentials удалены."
 		case strings.HasPrefix(action, "rule-delete:"):
 			err = m.RoutingRuleDelete(strings.TrimPrefix(action, "rule-delete:"))
 			text = "Правило удалено."
@@ -1055,23 +1120,38 @@ func routingWarpRegisterCommand(m RoutingManager) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 		defer cancel()
 		if err := m.RoutingWarpRegister(ctx, true); err != nil {
-			return warpRegisterMsg{err: err}
+			return warpSetupMsg{err: err}
 		}
-		warp, healthErr := m.RoutingWarpTest(ctx)
-		status := m.RoutingStatus(ctx)
-		status.Warp = warp
-		rules, rulesErr := m.RoutingRules()
-		if healthErr != nil {
-			return warpRegisterMsg{status: status, rules: rules, registered: true, err: fmt.Errorf("WARP зарегистрирован, но health-check не пройден: %w", healthErr)}
-		}
-		if rulesErr != nil {
-			return warpRegisterMsg{status: status, registered: true, err: fmt.Errorf("WARP зарегистрирован, но состояние правил не обновлено: %w", rulesErr)}
-		}
-		if !warp.Healthy {
-			return warpRegisterMsg{status: status, rules: rules, registered: true, err: errors.New("WARP зарегистрирован, но health-check не подтвердил работу WARP")}
-		}
-		return warpRegisterMsg{status: status, rules: rules, registered: true}
+		return routingWarpHealthResult(m, ctx, "WARP зарегистрирован; health-check пройден.", "WARP зарегистрирован")
 	}
+}
+
+func routingWarpImportCommand(m RoutingManager, path string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+		defer cancel()
+		if err := m.RoutingWarpImport(path); err != nil {
+			return warpSetupMsg{err: err}
+		}
+		return routingWarpHealthResult(m, ctx, "WARP-конфиг импортирован; health-check пройден.", "WARP-конфиг импортирован")
+	}
+}
+
+func routingWarpHealthResult(m RoutingManager, ctx context.Context, notice, changedText string) warpSetupMsg {
+	warp, healthErr := m.RoutingWarpTest(ctx)
+	status := m.RoutingStatus(ctx)
+	status.Warp = warp
+	rules, rulesErr := m.RoutingRules()
+	if healthErr != nil {
+		return warpSetupMsg{status: status, rules: rules, changed: true, err: fmt.Errorf("%s, но health-check не пройден: %w", changedText, healthErr)}
+	}
+	if rulesErr != nil {
+		return warpSetupMsg{status: status, changed: true, err: fmt.Errorf("%s, но состояние правил не обновлено: %w", changedText, rulesErr)}
+	}
+	if !warp.Healthy {
+		return warpSetupMsg{status: status, rules: rules, changed: true, err: fmt.Errorf("%s, но health-check не подтвердил работу WARP", changedText)}
+	}
+	return warpSetupMsg{status: status, rules: rules, changed: true, notice: notice}
 }
 
 func routingRuleSaveCommand(m RoutingManager, rule model.RoutingRule, update bool) tea.Cmd {
@@ -1128,7 +1208,7 @@ func uriCommand(m Manager, name string) tea.Cmd {
 }
 
 func isInputScreen(value screen) bool {
-	return value == screenAddName || value == screenEditValue || value == screenDeleteConfirm || value == screenRoutingRuleID || value == screenRoutingDomains || value == screenRoutingGeoSites || value == screenRoutingClients || value == screenRoutingPriority
+	return value == screenAddName || value == screenEditValue || value == screenDeleteConfirm || value == screenRoutingRuleID || value == screenRoutingDomains || value == screenRoutingGeoSites || value == screenRoutingClients || value == screenRoutingPriority || value == screenRoutingWarpImportPath
 }
 
 func isPrintableInput(value string) bool {

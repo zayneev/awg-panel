@@ -147,6 +147,10 @@ type fakeRouting struct {
 	warpTermsAccepted   bool
 	warpHealthChecked   bool
 	warpRegistrationErr error
+	warpImportedPath    string
+	warpImportErr       error
+	warpForgot          bool
+	warpForgetErr       error
 	warpHealthErr       error
 }
 
@@ -171,9 +175,29 @@ func (f *fakeRouting) RoutingWarpRegister(_ context.Context, accept bool) error 
 	f.status.Warp = model.WarpStatus{Configured: true, Source: "registered"}
 	return nil
 }
+func (f *fakeRouting) RoutingWarpImport(path string) error {
+	if f.warpImportErr != nil {
+		return f.warpImportErr
+	}
+	f.warpImportedPath = path
+	f.status.Warp = model.WarpStatus{Configured: true, Source: "imported"}
+	return nil
+}
 func (f *fakeRouting) RoutingWarpTest(context.Context) (model.WarpStatus, error) {
 	f.warpHealthChecked = true
-	return model.WarpStatus{Configured: true, Healthy: f.warpHealthErr == nil, Source: "registered"}, f.warpHealthErr
+	source := f.status.Warp.Source
+	if source == "" {
+		source = "registered"
+	}
+	return model.WarpStatus{Configured: true, Healthy: f.warpHealthErr == nil, Source: source}, f.warpHealthErr
+}
+func (f *fakeRouting) RoutingWarpForget(context.Context) error {
+	if f.warpForgetErr != nil {
+		return f.warpForgetErr
+	}
+	f.warpForgot = true
+	f.status.Warp = model.WarpStatus{}
+	return nil
 }
 
 func TestRoutingScreenAndDegradedWarning(t *testing.T) {
@@ -217,7 +241,7 @@ func TestRoutingRuleEditor(t *testing.T) {
 
 func TestWarpRegistrationFromTUI(t *testing.T) {
 	fake := &fakeRouting{fakeManager: &fakeManager{}, status: model.RoutingStatus{Installed: true, State: "disabled"}}
-	m := &modelUI{manager: fake, routing: fake, screen: screenRouting, routingTab: 2, width: 100, height: 30}
+	m := &modelUI{manager: fake, routing: fake, screen: screenRouting, routingTab: 2, routingStatus: fake.status, width: 100, height: 30}
 	updateKey(t, m, "g")
 	if m.screen != screenRoutingWarpRegisterConfirm {
 		t.Fatalf("registration confirmation did not open: screen=%d", m.screen)
@@ -249,10 +273,83 @@ func TestWarpRegistrationRequiresInstalledDisabledRouting(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			fake := &fakeRouting{fakeManager: &fakeManager{}, status: status}
-			m := &modelUI{manager: fake, routing: fake, screen: screenRouting, routingTab: 2}
+			m := &modelUI{manager: fake, routing: fake, screen: screenRouting, routingTab: 2, routingStatus: status}
 			if cmd := updateKey(t, m, "g"); cmd != nil || m.screen != screenRouting {
 				t.Fatalf("registration unexpectedly opened: screen=%d", m.screen)
 			}
 		})
+	}
+}
+
+func TestWarpImportFromTUI(t *testing.T) {
+	fake := &fakeRouting{fakeManager: &fakeManager{}, status: model.RoutingStatus{Installed: true, State: "disabled"}}
+	m := &modelUI{manager: fake, routing: fake, screen: screenRouting, routingTab: 2, routingStatus: fake.status, width: 100, height: 30}
+
+	updateKey(t, m, "i")
+	if m.screen != screenRoutingWarpImportPath {
+		t.Fatalf("import path screen did not open: screen=%d", m.screen)
+	}
+	for _, r := range "relative.conf" {
+		updateKey(t, m, string(r))
+	}
+	updateKey(t, m, "enter")
+	if m.screen != screenRoutingWarpImportPath || m.err == nil {
+		t.Fatal("relative import path was accepted")
+	}
+	for range len([]rune("relative.conf")) {
+		updateKey(t, m, "backspace")
+	}
+	for _, r := range "/root/warp.conf" {
+		updateKey(t, m, string(r))
+	}
+	updateKey(t, m, "enter")
+	if m.screen != screenRoutingWarpImportConfirm || m.warpImportPath != "/root/warp.conf" {
+		t.Fatalf("unexpected import confirmation: screen=%d path=%q", m.screen, m.warpImportPath)
+	}
+	if view := m.View().Content; !strings.Contains(view, "credentials будут заменены") || !strings.Contains(view, "останется без изменений") {
+		t.Fatalf("confirmation does not explain import: %s", view)
+	}
+	cmd := updateKey(t, m, "enter")
+	if cmd == nil || !m.busy {
+		t.Fatal("import command was not started")
+	}
+	_, _ = m.Update(cmd())
+	if fake.warpImportedPath != "/root/warp.conf" || !fake.warpHealthChecked {
+		t.Fatalf("unexpected import flow: path=%q checked=%v", fake.warpImportedPath, fake.warpHealthChecked)
+	}
+	if m.screen != screenRouting || m.err != nil || !strings.Contains(m.notice, "импортирован") {
+		t.Fatalf("unexpected result: screen=%d err=%v notice=%q", m.screen, m.err, m.notice)
+	}
+	if !m.routingStatus.Warp.Configured || !m.routingStatus.Warp.Healthy || m.routingStatus.Warp.Source != "imported" {
+		t.Fatalf("WARP status was not updated: %+v", m.routingStatus.Warp)
+	}
+}
+
+func TestWarpForgetFromTUI(t *testing.T) {
+	status := model.RoutingStatus{Installed: true, State: "disabled", Warp: model.WarpStatus{Configured: true, Source: "imported"}}
+	fake := &fakeRouting{fakeManager: &fakeManager{}, status: status}
+	m := &modelUI{manager: fake, routing: fake, screen: screenRouting, routingTab: 2, routingStatus: status, width: 100, height: 30}
+
+	updateKey(t, m, "f")
+	if m.screen != screenRoutingWarpForgetConfirm {
+		t.Fatalf("forget confirmation did not open: screen=%d", m.screen)
+	}
+	if view := m.View().Content; !strings.Contains(view, "Правила доменов сохранятся") {
+		t.Fatalf("confirmation does not explain forget: %s", view)
+	}
+	cmd := updateKey(t, m, "enter")
+	if cmd == nil || !m.busy {
+		t.Fatal("forget command was not started")
+	}
+	_, reload := m.Update(cmd())
+	if !fake.warpForgot || reload == nil {
+		t.Fatalf("unexpected forget flow: forgot=%v reload=%v", fake.warpForgot, reload != nil)
+	}
+	_, _ = m.Update(reload())
+	if m.screen != screenRouting || m.err != nil || !strings.Contains(m.notice, "credentials удалены") {
+		t.Fatalf("unexpected result: screen=%d err=%v notice=%q", m.screen, m.err, m.notice)
+	}
+	if m.routingStatus.Warp.Configured {
+		t.Fatalf("WARP status was not cleared: %+v", m.routingStatus.Warp)
 	}
 }
